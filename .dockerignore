@@ -1,0 +1,10 @@
+*
+!target/*-runner
+!target/*-runner.jar
+!target/lib/*
+!target/quarkus-app/*
+# Sources needed by the multi-stage build in Dockerfile.vercel
+!mvnw
+!.mvn
+!pom.xml
+!src

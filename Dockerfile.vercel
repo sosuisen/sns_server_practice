@@ -1,0 +1,52 @@
+####
+# This Dockerfile builds and runs the Quarkus application in native (no JVM) mode
+# on Vercel Functions (Container Images).
+#
+# Unlike src/main/docker/Dockerfile.native, this is a multi-stage build:
+# the native compilation itself runs inside the builder image, so Vercel
+# (or any machine with Docker) can build it without a local GraalVM or Maven
+# installation.
+#
+# Build and run locally:
+#
+# docker build -f Dockerfile.vercel -t sns-quarkus-native .
+# docker run -i --rm -e PORT=8080 -p 8080:8080 sns-quarkus-native
+#
+# On Vercel, this file (Dockerfile.vercel) at the project root is automatically
+# detected and used to build the container image.
+#
+# Required environment variables:
+#    
+# PORT, DATABASE_URL, DATABASE_USERNAME, DATABASE_PASSWORD,
+# JWT_VERIFY_PUBLIC_KEY, JWT_SIGN_KEY, ADMIN_EMAIL, ADMIN_PASSWORD
+###
+
+## Stage 1: compile the native executable inside the Mandrel builder image
+FROM quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build
+USER quarkus
+WORKDIR /code
+COPY --chown=quarkus:quarkus --chmod=0755 mvnw /code/mvnw
+COPY --chown=quarkus:quarkus .mvn /code/.mvn
+COPY --chown=quarkus:quarkus pom.xml /code/
+# Windows checkouts may give mvnw CRLF line endings, which break /bin/sh
+RUN sed -i 's/\r$//' mvnw
+# Download dependencies first so this layer is cached until pom.xml changes
+RUN ./mvnw -B dependency:go-offline
+COPY --chown=quarkus:quarkus src /code/src
+RUN ./mvnw package -Dnative -DskipTests
+
+## Stage 2: copy the executable into the micro runtime image
+FROM quay.io/quarkus/ubi9-quarkus-micro-image:2.0
+WORKDIR /work
+RUN chown 1001 /work \
+    && chmod "g+rwX" /work \
+    && chown 1001:root /work
+COPY --from=build --chown=1001:root --chmod=0755 /code/target/*-runner /work/application
+
+# The listening port is set by the PORT environment variable;
+# update EXPOSE to match if you change it.
+EXPOSE 8080
+
+USER 1001
+
+ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]
